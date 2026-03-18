@@ -10,14 +10,14 @@ UAbilityEditorHelperSettings::UAbilityEditorHelperSettings()
 {
 	GameplayEffectClass = UGameplayEffect::StaticClass();
 	GameplayAbilityClass = UGameplayAbility::StaticClass();
-	CustomAssetClass = UCustomDataAsset::StaticClass();
+	CustomDataAssetClass = UCustomDataAsset::StaticClass();
 
 	GameplayEffectDataType = TEXT("GameplayEffectConfig");
 	GameplayAbilityDataType = TEXT("GameplayAbilityConfig");
-	CustomAssetDataType = TEXT("CustomAssetConfig");
+	CustomDataAssetDataType = TEXT("CustomAssetConfig");
 
 	// 自定义资产的默认前缀
-	CustomAssetPrefix = TEXT("DA_");
+	CustomDataAssetPrefix = TEXT("DA_");
 
 	// 默认启动脚本
 	if (StartupPythonScripts.Num() == 0)
