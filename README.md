@@ -404,6 +404,8 @@ Field.ExcelHint = Prop->GetMetaData(TEXT("ExcelHint"));
 
 ```
 AbilityHelperSample/
+├── docs/
+│   └── PULL_REQUEST_GUIDE.md             # PR 工作流指南（中/英文）
 ├── Plugins/
 │   └── AbilityEditorHelper/              # 核心插件
 │       ├── Content/Python/               # Python 脚本（Excel 生成/导出）
@@ -414,6 +416,12 @@ AbilityHelperSample/
 │       └── DevTest/                      # 扩展示例代码
 └── Resources/                            # 文档截图
 ```
+
+## Pull Request 工作流
+
+关于 Copilot PR（拉取请求）的完整说明——包括什么是 PR、为什么使用 PR、如何审查/合并/回滚，以及本次 DataTable-to-asset 自动同步 PR 的推荐流程，请参阅：
+
+👉 [docs/PULL_REQUEST_GUIDE.md](docs/PULL_REQUEST_GUIDE.md)
 
 ## 许可证
 
@@ -821,6 +829,8 @@ Meta tags like `ExcelHint`, `ExcelSeparator`, `ExcelSheet`, and `ExcelIgnore` ha
 
 ```
 AbilityHelperSample/
+├── docs/
+│   └── PULL_REQUEST_GUIDE.md             # PR workflow guide (Chinese/English)
 ├── Plugins/
 │   └── AbilityEditorHelper/              # Core plugin
 │       ├── Content/Python/               # Python scripts (Excel generation/export)
@@ -831,6 +841,12 @@ AbilityHelperSample/
 │       └── DevTest/                      # Extension example code
 └── Resources/                            # Documentation screenshots
 ```
+
+## Pull Request Workflow
+
+For a complete explanation of Copilot PRs — what a PR is, why PRs are used, how to review/merge/rollback, and the recommended workflow for this DataTable-to-asset sync PR — see:
+
+👉 [docs/PULL_REQUEST_GUIDE.md](docs/PULL_REQUEST_GUIDE.md)
 
 ## License
 
