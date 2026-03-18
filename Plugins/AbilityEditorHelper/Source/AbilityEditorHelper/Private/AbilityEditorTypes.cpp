@@ -5,3 +5,7 @@
 
 DEFINE_LOG_CATEGORY(LogAbilityEditor);
 
+void UCustomDataAsset::ApplyConfig_Implementation(const FCustomAssetConfig& Config)
+{
+	Description = Config.Description;
+}
