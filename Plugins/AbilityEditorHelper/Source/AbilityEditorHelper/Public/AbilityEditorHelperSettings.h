@@ -11,7 +11,7 @@ class UGameplayEffect;
 class UGameplayAbility;
 class UDataTable;
 class UEditorUtilityWidgetBlueprint;
-class UCustomDataAsset;
+class UPrimaryDataAsset;
 
 /**
  *
@@ -52,51 +52,31 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "GameplayAbility")
 	FString GameplayAbilityPath;
 
-	// === 自定义资产配置 ===
+	// === 自定义 DataAsset 配置 ===
 
-	/**
-	 * 创建自定义资产时使用的默认类（应为 UCustomDataAsset 或其派生类）
-	 * 项目代码中继承 UCustomDataAsset 并重写 ApplyConfig() 来映射业务字段
-	 */
-	UPROPERTY(Config, EditAnywhere, Category = "CustomAsset")
-	TSubclassOf<UCustomDataAsset> CustomAssetClass;
+	/** 创建自定义 DataAsset 时默认使用的类 */
+	UPROPERTY(Config, EditAnywhere, Category = "CustomDataAsset")
+	TSubclassOf<UPrimaryDataAsset> CustomDataAssetClass;
 
-	/**
-	 * 用于批量导入/更新自定义资产的配置数据表
-	 * 行结构应为 FCustomAssetConfig 或其派生结构体
-	 */
-	UPROPERTY(Config, EditAnywhere, Category = "CustomAsset|Import")
-	TSoftObjectPtr<UDataTable> CustomAssetDataTable;
+	/** 用于批量导入/更新自定义 DataAsset 的配置数据表（行结构应为 FCustomDataAssetConfig 或其派生类） */
+	UPROPERTY(Config, EditAnywhere, Category = "CustomDataAsset|Import")
+	TSoftObjectPtr<UDataTable> CustomDataAssetDataTable;
 
-	/**
-	 * 批量创建/更新自定义资产时使用的基础路径（例如：/Game/Data/CustomAssets）
-	 */
-	UPROPERTY(Config, EditAnywhere, Category = "CustomAsset")
-	FString CustomAssetPath;
+	/** 批量创建/更新自定义 DataAsset 时使用的基础路径（例如：/Game/Assets/Custom） */
+	UPROPERTY(Config, EditAnywhere, Category = "CustomDataAsset")
+	FString CustomDataAssetPath;
 
-	/**
-	 * 自定义资产名称前缀（例如：DA_）
-	 * 行名不以此前缀开头时会自动添加
-	 */
-	UPROPERTY(Config, EditAnywhere, Category = "CustomAsset")
-	FString CustomAssetPrefix;
+	/** 自定义 DataAsset 对应的 Excel 文件名（可不带 .xlsx 后缀） */
+	UPROPERTY(Config, BlueprintReadWrite, EditAnywhere, Category = "CustomDataAsset|Import")
+	FString CustomDataAssetExcelName;
 
-	/**
-	 * 自定义资产对应的 Excel 文件名（可不带 .xlsx 后缀）
-	 * 用于 Excel ↔ DataTable 工作流
-	 */
-	UPROPERTY(Config, BlueprintReadWrite, EditAnywhere, Category = "CustomAsset|Import")
-	FString CustomAssetExcelName;
+	/** 自定义 DataAsset 配置结构体的类型路径（如 /Script/YourModule.YourAssetConfig） */
+	UPROPERTY(Config, BlueprintReadWrite, EditAnywhere, Category = "CustomDataAsset|Import")
+	FString CustomDataAssetDataType;
 
-	/**
-	 * 自定义资产配置结构体的类型路径（格式：/Script/ModuleName.StructName）
-	 * 例如：/Script/AbilityEditorHelper.CustomAssetConfig（默认值）
-	 * 若项目定义了 FCustomAssetConfig 的派生结构体，需更新为派生结构体的路径，
-	 * 以便 Python/Excel 工具链从正确的结构体生成 Schema。
-	 * 此值不影响 C++ 运行时行为（由 DataTable 行结构类型决定）。
-	 */
-	UPROPERTY(Config, BlueprintReadWrite, EditAnywhere, Category = "CustomAsset|Import")
-	FString CustomAssetDataType;
+	/** 自定义 DataAsset 资产名前缀（默认：DA_） */
+	UPROPERTY(Config, EditAnywhere, Category = "CustomDataAsset")
+	FString CustomDataAssetPrefix = TEXT("DA_");
 
 	// === Excel/数据类型 配置 ===
 

@@ -8,6 +8,7 @@
 #include "Misc/PackageName.h"
 #include "GameplayTagContainer.h"
 #include "Engine/DataTable.h"
+#include "Engine/DataAsset.h"
 #include "Kismet/DataTableFunctionLibrary.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "AssetToolsModule.h"
@@ -2312,6 +2313,495 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayAbilitiesFromJson(
 }
 
 // ===========================================
+// 通用自定义 DataAsset 实现
+// ===========================================
+
+bool UAbilityEditorHelperLibrary::GetCustomAssetSettingsAndDataTable(
+	const UAbilityEditorHelperSettings*& OutSettings,
+	UDataTable*& OutDataTable)
+{
+	OutSettings = GetDefault<UAbilityEditorHelperSettings>();
+	if (!OutSettings)
+	{
+		UE_LOG(LogAbilityEditor, Warning, TEXT("无法获取 UAbilityEditorHelperSettings"));
+		return false;
+	}
+
+	OutDataTable = OutSettings->CustomDataAssetDataTable.IsValid()
+		? OutSettings->CustomDataAssetDataTable.Get()
+		: OutSettings->CustomDataAssetDataTable.LoadSynchronous();
+
+	if (!OutDataTable)
+	{
+		UE_LOG(LogAbilityEditor, Warning, TEXT("CustomDataAssetDataTable 未配置或加载失败"));
+		return false;
+	}
+
+	return true;
+}
+
+FString UAbilityEditorHelperLibrary::GetCustomDataAssetBasePath(const UAbilityEditorHelperSettings* Settings)
+{
+	if (!Settings || Settings->CustomDataAssetPath.IsEmpty())
+	{
+		return TEXT("/Game/Assets/Custom");
+	}
+
+	FString BasePath = Settings->CustomDataAssetPath;
+	if (!BasePath.StartsWith(TEXT("/")))
+	{
+		BasePath = TEXT("/Game/") + BasePath;
+	}
+	BasePath.RemoveFromEnd(TEXT("/"));
+	return BasePath;
+}
+
+void UAbilityEditorHelperLibrary::CleanupCustomDataAssetFolder(
+	const FString& BasePath,
+	const UDataTable* DataTable,
+	const FString& Prefix)
+{
+#if WITH_EDITOR
+	if (!DataTable || BasePath.IsEmpty())
+	{
+		return;
+	}
+
+	// 预构建期望存在的资产名集合（带前缀）
+	TSet<FName> DesiredAssetNames;
+	for (const TPair<FName, uint8*>& RowPair : DataTable->GetRowMap())
+	{
+		FString AssetName = RowPair.Key.ToString();
+		if (!Prefix.IsEmpty() && !AssetName.StartsWith(Prefix))
+		{
+			AssetName = Prefix + AssetName;
+		}
+		DesiredAssetNames.Add(FName(*AssetName));
+	}
+
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	TArray<FAssetData> Assets;
+	AssetRegistry.GetAssetsByPath(FName(*BasePath), Assets, true);
+
+	TArray<UObject*> ObjectsToDelete;
+	for (const FAssetData& AssetData : Assets)
+	{
+		if (!DesiredAssetNames.Contains(AssetData.AssetName))
+		{
+			if (UObject* Obj = AssetData.GetAsset())
+			{
+				ObjectsToDelete.Add(Obj);
+				UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 清理不在 DataTable 中的自定义 DataAsset：%s"), *AssetData.AssetName.ToString());
+			}
+		}
+	}
+
+	if (ObjectsToDelete.Num() > 0)
+	{
+		ObjectTools::DeleteObjectsUnchecked(ObjectsToDelete);
+	}
+#endif
+}
+
+UPrimaryDataAsset* UAbilityEditorHelperLibrary::CreateOrImportCustomDataAsset(
+	const FString& AssetPath,
+	TSubclassOf<UPrimaryDataAsset> AssetClass,
+	const FTableRowBase& Config,
+	bool& bOutSuccess)
+{
+	bOutSuccess = false;
+
+	if (AssetPath.IsEmpty())
+	{
+		UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] CreateOrImportCustomDataAsset: AssetPath 为空"));
+		return nullptr;
+	}
+
+	if (!AssetClass)
+	{
+		// 回退到默认 Settings 中配置的类
+		if (const UAbilityEditorHelperSettings* Settings = GetDefault<UAbilityEditorHelperSettings>())
+		{
+			if (Settings->CustomDataAssetClass)
+			{
+				AssetClass = Settings->CustomDataAssetClass;
+			}
+		}
+
+		if (!AssetClass)
+		{
+			AssetClass = UPrimaryDataAsset::StaticClass();
+		}
+	}
+
+	FString PackageName, AssetName, ObjectPath;
+	if (!ParseAssetPath(AssetPath, PackageName, AssetName, ObjectPath))
+	{
+		UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] CreateOrImportCustomDataAsset: 无法解析路径：%s"), *AssetPath);
+		return nullptr;
+	}
+
+	// 尝试加载已存在的资产
+	UPrimaryDataAsset* Asset = nullptr;
+	if (!ObjectPath.IsEmpty())
+	{
+		Asset = Cast<UPrimaryDataAsset>(StaticLoadObject(UPrimaryDataAsset::StaticClass(), nullptr, *ObjectPath));
+	}
+
+#if WITH_EDITOR
+	bool bIsNewlyCreated = false;
+
+	// 若已存在，检查类型是否匹配（类型不一致则删除重建）
+	if (Asset && Asset->GetClass() != AssetClass)
+	{
+		UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 已存在资产类型与目标类型不匹配，删除并重建：%s"), *AssetPath);
+		TArray<UObject*> ToDelete;
+		ToDelete.Add(Asset);
+		ObjectTools::DeleteObjectsUnchecked(ToDelete);
+		Asset = nullptr;
+	}
+
+	// 不存在则创建新资产
+	if (!Asset)
+	{
+		if (!FPackageName::IsValidLongPackageName(PackageName))
+		{
+			UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] 无效的包路径：%s"), *PackageName);
+			return nullptr;
+		}
+
+		UPackage* Package = CreatePackage(*PackageName);
+		if (!Package)
+		{
+			UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] 无法创建包：%s"), *PackageName);
+			return nullptr;
+		}
+
+		Asset = NewObject<UPrimaryDataAsset>(Package, AssetClass, FName(*AssetName), RF_Public | RF_Standalone | RF_Transactional);
+		if (!Asset)
+		{
+			UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] 无法创建自定义 DataAsset：%s"), *AssetPath);
+			return nullptr;
+		}
+
+		FAssetRegistryModule::AssetCreated(Asset);
+		Package->MarkPackageDirty();
+		bIsNewlyCreated = true;
+	}
+
+	// 变更检测：记录委托应用前的状态
+	TArray<uint8> BeforeBytes;
+	if (!bIsNewlyCreated)
+	{
+		BeforeBytes = SerializeObjectState(Asset);
+	}
+
+	// 广播后处理委托，由项目 Source 负责将 Config 数据写入 Asset
+	if (GEditor)
+	{
+		if (UAbilityEditorHelperSubsystem* Subsystem = GEditor->GetEditorSubsystem<UAbilityEditorHelperSubsystem>())
+		{
+			Subsystem->BroadcastPostProcessCustomDataAsset(&Config, Asset);
+		}
+	}
+
+	// 变更检测：仅在属性实际发生变化时才标记脏包
+	if (bIsNewlyCreated)
+	{
+		Asset->MarkPackageDirty();
+	}
+	else
+	{
+		TArray<uint8> AfterBytes = SerializeObjectState(Asset);
+		if (BeforeBytes != AfterBytes)
+		{
+			Asset->MarkPackageDirty();
+			UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 自定义 DataAsset 已变更，标记脏包：%s"), *Asset->GetName());
+		}
+		else
+		{
+			UE_LOG(LogAbilityEditor, Verbose, TEXT("[AbilityEditorHelper] 自定义 DataAsset 未变更，跳过标记脏包：%s"), *Asset->GetName());
+		}
+	}
+
+	bOutSuccess = (Asset != nullptr);
+	return Asset;
+#else
+	bOutSuccess = (Asset != nullptr);
+	return Asset;
+#endif
+}
+
+void UAbilityEditorHelperLibrary::CreateOrUpdateCustomDataAssetsFromSettings(bool bClearFolderFirst)
+{
+	const UAbilityEditorHelperSettings* Settings = nullptr;
+	UDataTable* DataTable = nullptr;
+	if (!GetCustomAssetSettingsAndDataTable(Settings, DataTable))
+	{
+		UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] Settings 未找到或 CustomDataAssetDataTable 未设置。"));
+		return;
+	}
+
+	// 校验行结构（支持 FCustomDataAssetConfig 及其派生类）
+	if (!DataTable->GetRowStruct() || !DataTable->GetRowStruct()->IsChildOf(FCustomDataAssetConfig::StaticStruct()))
+	{
+		UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] DataTable 行结构不是 FCustomDataAssetConfig 或其派生类，无法导入。"));
+		return;
+	}
+
+	FString BasePath = GetCustomDataAssetBasePath(Settings);
+	FString Prefix = Settings->CustomDataAssetPrefix.IsEmpty() ? TEXT("DA_") : Settings->CustomDataAssetPrefix;
+	TSubclassOf<UPrimaryDataAsset> AssetClass = Settings->CustomDataAssetClass
+		? Settings->CustomDataAssetClass
+		: TSubclassOf<UPrimaryDataAsset>(UPrimaryDataAsset::StaticClass());
+
+#if WITH_EDITOR
+	if (bClearFolderFirst)
+	{
+		CleanupCustomDataAssetFolder(BasePath, DataTable, Prefix);
+	}
+#endif
+
+	int32 SuccessCount = 0;
+	int32 FailCount = 0;
+
+	for (const TPair<FName, uint8*>& RowPair : DataTable->GetRowMap())
+	{
+		const FName RowName = RowPair.Key;
+		const uint8* RowData = RowPair.Value;
+		if (!RowData)
+		{
+			UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] 行 %s 数据为空，已跳过。"), *RowName.ToString());
+			continue;
+		}
+
+		const FTableRowBase* Config = reinterpret_cast<const FTableRowBase*>(RowData);
+
+		FString RowAssetName = RowName.ToString();
+		if (!Prefix.IsEmpty() && !RowAssetName.StartsWith(Prefix))
+		{
+			RowAssetName = Prefix + RowAssetName;
+		}
+		const FString AssetPath = FString::Printf(TEXT("%s/%s"), *BasePath, *RowAssetName);
+
+		bool bOK = false;
+		UPrimaryDataAsset* Asset = CreateOrImportCustomDataAsset(AssetPath, AssetClass, *Config, bOK);
+		if (bOK && Asset)
+		{
+			UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 成功创建/更新自定义 DataAsset：%s"), *AssetPath);
+			++SuccessCount;
+		}
+		else
+		{
+			UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] 创建/更新失败：%s"), *AssetPath);
+			++FailCount;
+		}
+	}
+
+	UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 自定义 DataAsset 导入完成：成功 %d 个，失败 %d 个"), SuccessCount, FailCount);
+}
+
+bool UAbilityEditorHelperLibrary::ImportAndUpdateCustomDataAssetsFromJson(
+	const FString& JsonFileName,
+	bool bClearFolderFirst,
+	TArray<FName>& OutUpdatedRowNames)
+{
+	OutUpdatedRowNames.Reset();
+
+	const UAbilityEditorHelperSettings* Settings = nullptr;
+	UDataTable* DataTable = nullptr;
+	if (!GetCustomAssetSettingsAndDataTable(Settings, DataTable))
+	{
+		UE_LOG(LogAbilityEditor, Error, TEXT("无法获取 Settings 或 CustomDataAssetDataTable"));
+		return false;
+	}
+
+	// 校验行结构（支持 FCustomDataAssetConfig 及其派生类）
+	UScriptStruct* RowStruct = const_cast<UScriptStruct*>(DataTable->GetRowStruct());
+	if (!RowStruct || !RowStruct->IsChildOf(FCustomDataAssetConfig::StaticStruct()))
+	{
+		UE_LOG(LogAbilityEditor, Error, TEXT("DataTable 行结构不是 FCustomDataAssetConfig 或其派生类"));
+		return false;
+	}
+
+	const int32 StructSize = RowStruct->GetStructureSize();
+
+	if (Settings->JsonPath.IsEmpty())
+	{
+		UE_LOG(LogAbilityEditor, Error, TEXT("UAbilityEditorHelperSettings 的 JsonPath 未配置"));
+		return false;
+	}
+	const FString JsonFilePath = FPaths::Combine(Settings->JsonPath, JsonFileName);
+
+	if (!FPaths::FileExists(JsonFilePath))
+	{
+		UE_LOG(LogAbilityEditor, Error, TEXT("JSON 文件不存在：%s"), *JsonFilePath);
+		return false;
+	}
+
+	FString JsonContent;
+	if (!FFileHelper::LoadFileToString(JsonContent, *JsonFilePath))
+	{
+		UE_LOG(LogAbilityEditor, Error, TEXT("无法读取 JSON 文件：%s"), *JsonFilePath);
+		return false;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonContent);
+	if (!FJsonSerializer::Deserialize(Reader, JsonArray))
+	{
+		UE_LOG(LogAbilityEditor, Error, TEXT("JSON 解析失败，格式不正确"));
+		return false;
+	}
+
+	// 缓存现有 DataTable 数据的 JSON 表示（用于增量比较）
+	TMap<FName, FString> ExistingJsonMap;
+	for (const TPair<FName, uint8*>& RowPair : DataTable->GetRowMap())
+	{
+		if (RowPair.Value)
+		{
+			ExistingJsonMap.Add(RowPair.Key, SerializeStructToJsonString(RowStruct, RowPair.Value));
+		}
+	}
+
+	TMap<FName, TSharedPtr<uint8, ESPMode::ThreadSafe>> NewConfigsMemory;
+
+	for (const TSharedPtr<FJsonValue>& JsonValue : JsonArray)
+	{
+		if (!JsonValue.IsValid() || JsonValue->Type != EJson::Object)
+		{
+			continue;
+		}
+
+		const TSharedPtr<FJsonObject>& JsonObject = JsonValue->AsObject();
+		if (!JsonObject.IsValid())
+		{
+			continue;
+		}
+
+		FString RowNameStr;
+		if (!JsonObject->TryGetStringField(TEXT("Name"), RowNameStr) || RowNameStr.IsEmpty())
+		{
+			UE_LOG(LogAbilityEditor, Warning, TEXT("JSON 条目缺少 Name 字段，已跳过"));
+			continue;
+		}
+
+		TSharedPtr<uint8, ESPMode::ThreadSafe> ConfigMemory(
+			static_cast<uint8*>(FMemory::Malloc(StructSize)),
+			[](uint8* Ptr) { FMemory::Free(Ptr); }
+		);
+		RowStruct->InitializeStruct(ConfigMemory.Get());
+
+		if (!FJsonObjectConverter::JsonObjectToUStruct(JsonObject.ToSharedRef(), RowStruct, ConfigMemory.Get()))
+		{
+			UE_LOG(LogAbilityEditor, Warning, TEXT("无法反序列化行 %s，已跳过"), *RowNameStr);
+			RowStruct->DestroyStruct(ConfigMemory.Get());
+			continue;
+		}
+
+		FName RowName(*RowNameStr);
+		NewConfigsMemory.Add(RowName, ConfigMemory);
+
+		FString NewJsonStr = SerializeStructToJsonString(RowStruct, ConfigMemory.Get());
+		const FString* ExistingJson = ExistingJsonMap.Find(RowName);
+		if (!ExistingJson || !ExistingJson->Equals(NewJsonStr))
+		{
+			OutUpdatedRowNames.Add(RowName);
+			UE_LOG(LogAbilityEditor, Log, TEXT("检测到变化的行：%s"), *RowNameStr);
+		}
+	}
+
+	if (OutUpdatedRowNames.Num() == 0)
+	{
+		UE_LOG(LogAbilityEditor, Log, TEXT("未检测到任何数据变化，无需更新"));
+		return true;
+	}
+
+	UE_LOG(LogAbilityEditor, Log, TEXT("共检测到 %d 行数据变化"), OutUpdatedRowNames.Num());
+
+#if WITH_EDITOR
+	// 更新 DataTable 中变化的行
+	for (const FName& RowName : OutUpdatedRowNames)
+	{
+		TSharedPtr<uint8, ESPMode::ThreadSafe>* NewConfigMemory = NewConfigsMemory.Find(RowName);
+		if (!NewConfigMemory || !NewConfigMemory->IsValid())
+		{
+			continue;
+		}
+
+		uint8* ExistingRowData = DataTable->FindRowUnchecked(RowName);
+		if (ExistingRowData)
+		{
+			RowStruct->CopyScriptStruct(ExistingRowData, NewConfigMemory->Get());
+		}
+		else
+		{
+			DataTable->AddRow(RowName, *reinterpret_cast<FTableRowBase*>(NewConfigMemory->Get()));
+		}
+	}
+
+	DataTable->MarkPackageDirty();
+
+	FString BasePath = GetCustomDataAssetBasePath(Settings);
+	FString Prefix = Settings->CustomDataAssetPrefix.IsEmpty() ? TEXT("DA_") : Settings->CustomDataAssetPrefix;
+	TSubclassOf<UPrimaryDataAsset> AssetClass = Settings->CustomDataAssetClass
+		? Settings->CustomDataAssetClass
+		: TSubclassOf<UPrimaryDataAsset>(UPrimaryDataAsset::StaticClass());
+
+	if (bClearFolderFirst)
+	{
+		CleanupCustomDataAssetFolder(BasePath, DataTable, Prefix);
+	}
+
+	// 只对变化的行创建/更新 DataAsset
+	int32 SuccessCount = 0;
+	int32 FailCount = 0;
+
+	for (const FName& RowName : OutUpdatedRowNames)
+	{
+		uint8* ConfigData = DataTable->FindRowUnchecked(RowName);
+		if (!ConfigData)
+		{
+			continue;
+		}
+
+		FString RowAssetName = RowName.ToString();
+		if (!Prefix.IsEmpty() && !RowAssetName.StartsWith(Prefix))
+		{
+			RowAssetName = Prefix + RowAssetName;
+		}
+		const FString AssetPath = FString::Printf(TEXT("%s/%s"), *BasePath, *RowAssetName);
+
+		bool bOK = false;
+		UPrimaryDataAsset* Asset = CreateOrImportCustomDataAsset(
+			AssetPath,
+			AssetClass,
+			*reinterpret_cast<const FTableRowBase*>(ConfigData),
+			bOK);
+
+		if (bOK && Asset)
+		{
+			UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 成功创建/更新自定义 DataAsset：%s"), *AssetPath);
+			++SuccessCount;
+		}
+		else
+		{
+			UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] 创建/更新失败：%s"), *AssetPath);
+			++FailCount;
+		}
+	}
+
+	UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 自定义 DataAsset 增量更新完成：成功 %d 个，失败 %d 个"), SuccessCount, FailCount);
+
+	return FailCount == 0;
+#else
+	return false;
+#endif
+}
+
+// ===========================================
 // EditorUtilityWidget 相关
 // ===========================================
 
@@ -2346,507 +2836,3 @@ bool UAbilityEditorHelperLibrary::OpenEditorUtilityWidget()
 #endif
 }
 
-// ===========================================
-// 自定义资产（CustomAsset）相关函数实现
-// ===========================================
-
-bool UAbilityEditorHelperLibrary::GetCustomAssetSettingsAndDataTable(
-	const UAbilityEditorHelperSettings*& OutSettings, UDataTable*& OutDataTable)
-{
-	OutSettings = GetDefault<UAbilityEditorHelperSettings>();
-	if (!OutSettings)
-	{
-		UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] 无法获取 UAbilityEditorHelperSettings"));
-		return false;
-	}
-
-	OutDataTable = OutSettings->CustomAssetDataTable.IsValid()
-		? OutSettings->CustomAssetDataTable.Get()
-		: OutSettings->CustomAssetDataTable.LoadSynchronous();
-
-	if (!OutDataTable)
-	{
-		UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] CustomAssetDataTable 未配置或加载失败"));
-		return false;
-	}
-
-	return true;
-}
-
-FString UAbilityEditorHelperLibrary::GetCustomAssetBasePath(const UAbilityEditorHelperSettings* Settings)
-{
-	if (!Settings || Settings->CustomAssetPath.IsEmpty())
-	{
-		return TEXT("/Game/Data/CustomAssets");
-	}
-
-	FString BasePath = Settings->CustomAssetPath;
-	if (!BasePath.StartsWith(TEXT("/")))
-	{
-		BasePath = TEXT("/Game/") + BasePath;
-	}
-	BasePath.RemoveFromEnd(TEXT("/"));
-	return BasePath;
-}
-
-FString UAbilityEditorHelperLibrary::GetCustomAssetPrefix(const UAbilityEditorHelperSettings* Settings)
-{
-	if (!Settings || Settings->CustomAssetPrefix.IsEmpty())
-	{
-		return TEXT("DA_");
-	}
-	FString Prefix = Settings->CustomAssetPrefix;
-	// 确保以 _ 结尾，方便后面直接拼接
-	if (!Prefix.EndsWith(TEXT("_")))
-	{
-		Prefix += TEXT("_");
-	}
-	return Prefix;
-}
-
-void UAbilityEditorHelperLibrary::CleanupCustomAssetFolder(
-	const FString& BasePath, const FString& AssetPrefix, const UDataTable* DataTable)
-{
-#if WITH_EDITOR
-	if (BasePath.IsEmpty() || !DataTable)
-	{
-		return;
-	}
-
-	// 收集 DataTable 中期望存在的资产名
-	TSet<FString> ValidAssetNames;
-	for (const TPair<FName, uint8*>& RowPair : DataTable->GetRowMap())
-	{
-		FString RowAssetName = RowPair.Key.ToString();
-		if (!RowAssetName.StartsWith(AssetPrefix))
-		{
-			RowAssetName = AssetPrefix + RowAssetName;
-		}
-		ValidAssetNames.Add(RowAssetName);
-	}
-
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-
-	TArray<FAssetData> AssetDataList;
-	AssetRegistry.GetAssetsByPath(FName(*BasePath), AssetDataList, /*bRecursive=*/true);
-
-	TArray<UObject*> ToDelete;
-	for (const FAssetData& AssetData : AssetDataList)
-	{
-		FString AssetName = AssetData.AssetName.ToString();
-		if (!ValidAssetNames.Contains(AssetName))
-		{
-			if (UObject* Asset = AssetData.GetAsset())
-			{
-				if (Asset->IsA<UCustomDataAsset>())
-				{
-					ToDelete.Add(Asset);
-					UE_LOG(LogAbilityEditor, Log,
-						TEXT("[AbilityEditorHelper] 清理不在 DataTable 中的自定义资产：%s"), *AssetName);
-				}
-			}
-		}
-	}
-
-	if (ToDelete.Num() > 0)
-	{
-		ObjectTools::DeleteObjectsUnchecked(ToDelete);
-	}
-#endif
-}
-
-UCustomDataAsset* UAbilityEditorHelperLibrary::CreateOrImportCustomAsset(
-	const FString& AssetPath,
-	const FCustomAssetConfig& Config,
-	bool& bOutSuccess)
-{
-	bOutSuccess = false;
-
-	FString PackageName, AssetName, ObjectPath;
-	if (!ParseAssetPath(AssetPath, PackageName, AssetName, ObjectPath))
-	{
-		UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] 无法解析自定义资产路径：%s"), *AssetPath);
-		return nullptr;
-	}
-
-	// 确定目标资产类
-	TSubclassOf<UCustomDataAsset> AssetClass = UCustomDataAsset::StaticClass();
-	if (const UAbilityEditorHelperSettings* Settings = GetDefault<UAbilityEditorHelperSettings>())
-	{
-		if (Settings->CustomAssetClass)
-		{
-			AssetClass = Settings->CustomAssetClass;
-		}
-	}
-	if (!Config.ParentClass.IsEmpty())
-	{
-		if (UClass* LoadedClass = LoadClassFromPath<UCustomDataAsset>(Config.ParentClass))
-		{
-			AssetClass = LoadedClass;
-		}
-		else
-		{
-			UE_LOG(LogAbilityEditor, Warning,
-				TEXT("[AbilityEditorHelper] 无法加载自定义资产 ParentClass：%s，使用默认类"), *Config.ParentClass);
-		}
-	}
-
-	// 尝试加载已有资产
-	UCustomDataAsset* Asset = LoadObject<UCustomDataAsset>(nullptr, *ObjectPath);
-
-#if WITH_EDITOR
-	bool bIsNewlyCreated = false;
-
-	if (!Asset)
-	{
-		if (!FPackageName::IsValidLongPackageName(PackageName))
-		{
-			UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] 无效包名：%s"), *PackageName);
-			return nullptr;
-		}
-
-		UPackage* Package = CreatePackage(*PackageName);
-		if (!Package)
-		{
-			UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] 无法创建包：%s"), *PackageName);
-			return nullptr;
-		}
-
-		// 使用 NewObject 创建 DataAsset 实例（比 AssetFactory 更通用）
-		Asset = NewObject<UCustomDataAsset>(
-			Package,
-			AssetClass,
-			FName(*AssetName),
-			RF_Public | RF_Standalone | RF_Transactional
-		);
-
-		if (!Asset)
-		{
-			UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] 无法创建自定义资产：%s"), *AssetPath);
-			return nullptr;
-		}
-
-		FAssetRegistryModule::AssetCreated(Asset);
-		Package->MarkPackageDirty();
-		bIsNewlyCreated = true;
-	}
-
-	// 变更检测：记录应用前的状态
-	TArray<uint8> BeforeBytes;
-	if (!bIsNewlyCreated)
-	{
-		BeforeBytes = SerializeObjectState(Asset);
-	}
-
-	// 调用 ApplyConfig 写入配置数据
-	Asset->ApplyConfig(Config);
-
-	// 广播后处理委托
-	if (GEditor)
-	{
-		if (UAbilityEditorHelperSubsystem* Subsystem = GEditor->GetEditorSubsystem<UAbilityEditorHelperSubsystem>())
-		{
-			Subsystem->BroadcastPostProcessCustomAsset(&Config, Asset);
-		}
-	}
-
-	// 变更检测：仅在有实际变化时标记脏包
-	if (bIsNewlyCreated)
-	{
-		Asset->MarkPackageDirty();
-	}
-	else
-	{
-		TArray<uint8> AfterBytes = SerializeObjectState(Asset);
-		if (BeforeBytes != AfterBytes)
-		{
-			Asset->MarkPackageDirty();
-			UE_LOG(LogAbilityEditor, Log,
-				TEXT("[AbilityEditorHelper] 自定义资产已变更，标记脏包：%s"), *Asset->GetName());
-		}
-		else
-		{
-			UE_LOG(LogAbilityEditor, Verbose,
-				TEXT("[AbilityEditorHelper] 自定义资产未变更，跳过标记脏包：%s"), *Asset->GetName());
-		}
-	}
-#endif
-
-	bOutSuccess = (Asset != nullptr);
-	return Asset;
-}
-
-void UAbilityEditorHelperLibrary::CreateOrUpdateCustomAssetsFromSettings(bool bClearCustomAssetFolderFirst)
-{
-	const UAbilityEditorHelperSettings* Settings = nullptr;
-	UDataTable* DataTable = nullptr;
-	if (!GetCustomAssetSettingsAndDataTable(Settings, DataTable))
-	{
-		UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] Settings 未找到或 CustomAssetDataTable 未设置。"));
-		return;
-	}
-
-	// 校验行结构（支持 FCustomAssetConfig 及其派生结构体）
-	if (!DataTable->GetRowStruct() || !DataTable->GetRowStruct()->IsChildOf(FCustomAssetConfig::StaticStruct()))
-	{
-		UE_LOG(LogAbilityEditor, Warning,
-			TEXT("[AbilityEditorHelper] DataTable 行结构不是 FCustomAssetConfig 或其派生类，无法导入。"));
-		return;
-	}
-
-	const FString BasePath  = GetCustomAssetBasePath(Settings);
-	const FString Prefix    = GetCustomAssetPrefix(Settings);
-
-#if WITH_EDITOR
-	if (bClearCustomAssetFolderFirst)
-	{
-		CleanupCustomAssetFolder(BasePath, Prefix, DataTable);
-	}
-#endif
-
-	int32 SuccessCount = 0;
-	int32 FailCount    = 0;
-	int32 SkipCount    = 0;
-
-	for (const TPair<FName, uint8*>& RowPair : DataTable->GetRowMap())
-	{
-		const FName  RowName = RowPair.Key;
-		const uint8* RowData = RowPair.Value;
-		if (!RowData)
-		{
-			UE_LOG(LogAbilityEditor, Warning,
-				TEXT("[AbilityEditorHelper] 行 %s 数据为空，已跳过。"), *RowName.ToString());
-			++SkipCount;
-			continue;
-		}
-
-		const FCustomAssetConfig* Config = reinterpret_cast<const FCustomAssetConfig*>(RowData);
-
-		FString RowAssetName = RowName.ToString();
-		if (!RowAssetName.StartsWith(Prefix))
-		{
-			RowAssetName = Prefix + RowAssetName;
-		}
-		const FString AssetPath = FString::Printf(TEXT("%s/%s"), *BasePath, *RowAssetName);
-
-		bool bOK = false;
-		UCustomDataAsset* Asset = CreateOrImportCustomAsset(AssetPath, *Config, bOK);
-		if (bOK && Asset)
-		{
-			UE_LOG(LogAbilityEditor, Log,
-				TEXT("[AbilityEditorHelper] 成功创建/更新自定义资产：%s"), *AssetPath);
-			++SuccessCount;
-		}
-		else
-		{
-			UE_LOG(LogAbilityEditor, Error,
-				TEXT("[AbilityEditorHelper] 自定义资产创建/更新失败：%s"), *AssetPath);
-			++FailCount;
-		}
-	}
-
-	UE_LOG(LogAbilityEditor, Log,
-		TEXT("[AbilityEditorHelper] 自定义资产导入完成：成功 %d 个，失败 %d 个，跳过 %d 个"),
-		SuccessCount, FailCount, SkipCount);
-}
-
-bool UAbilityEditorHelperLibrary::ImportAndUpdateCustomAssetsFromJson(
-	const FString& JsonFileName,
-	bool bClearCustomAssetFolderFirst,
-	TArray<FName>& OutUpdatedRowNames)
-{
-	OutUpdatedRowNames.Reset();
-
-	const UAbilityEditorHelperSettings* Settings = nullptr;
-	UDataTable* DataTable = nullptr;
-	if (!GetCustomAssetSettingsAndDataTable(Settings, DataTable))
-	{
-		UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] 无法获取 Settings 或 CustomAssetDataTable"));
-		return false;
-	}
-
-	// 校验行结构
-	UScriptStruct* RowStruct = const_cast<UScriptStruct*>(DataTable->GetRowStruct());
-	if (!RowStruct || !RowStruct->IsChildOf(FCustomAssetConfig::StaticStruct()))
-	{
-		UE_LOG(LogAbilityEditor, Error,
-			TEXT("[AbilityEditorHelper] DataTable 行结构不是 FCustomAssetConfig 或其派生类"));
-		return false;
-	}
-
-	const int32 StructSize = RowStruct->GetStructureSize();
-
-	// 构建 JSON 文件完整路径
-	if (Settings->JsonPath.IsEmpty())
-	{
-		UE_LOG(LogAbilityEditor, Error,
-			TEXT("[AbilityEditorHelper] UAbilityEditorHelperSettings 的 JsonPath 未配置"));
-		return false;
-	}
-	const FString JsonFilePath = FPaths::Combine(Settings->JsonPath, JsonFileName);
-
-	if (!FPaths::FileExists(JsonFilePath))
-	{
-		UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] JSON 文件不存在：%s"), *JsonFilePath);
-		return false;
-	}
-
-	FString JsonContent;
-	if (!FFileHelper::LoadFileToString(JsonContent, *JsonFilePath))
-	{
-		UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] 无法读取 JSON 文件：%s"), *JsonFilePath);
-		return false;
-	}
-
-	// 解析 JSON 为数组
-	TArray<TSharedPtr<FJsonValue>> JsonArray;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonContent);
-	if (!FJsonSerializer::Deserialize(Reader, JsonArray))
-	{
-		UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] JSON 解析失败，格式不正确"));
-		return false;
-	}
-
-	// 缓存现有 DataTable 数据的 JSON 表示
-	TMap<FName, FString> ExistingJsonMap;
-	for (const TPair<FName, uint8*>& RowPair : DataTable->GetRowMap())
-	{
-		if (RowPair.Value)
-		{
-			ExistingJsonMap.Add(RowPair.Key, SerializeStructToJsonString(RowStruct, RowPair.Value));
-		}
-	}
-
-	// 解析新配置，找出变化行
-	TMap<FName, TSharedPtr<uint8, ESPMode::ThreadSafe>> NewConfigsMemory;
-
-	for (const TSharedPtr<FJsonValue>& JsonValue : JsonArray)
-	{
-		if (!JsonValue.IsValid() || JsonValue->Type != EJson::Object)
-		{
-			continue;
-		}
-
-		const TSharedPtr<FJsonObject>& JsonObject = JsonValue->AsObject();
-		if (!JsonObject.IsValid())
-		{
-			continue;
-		}
-
-		FString RowNameStr;
-		if (!JsonObject->TryGetStringField(TEXT("Name"), RowNameStr) || RowNameStr.IsEmpty())
-		{
-			UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] JSON 条目缺少 Name 字段，已跳过"));
-			continue;
-		}
-
-		TSharedPtr<uint8, ESPMode::ThreadSafe> ConfigMemory(
-			static_cast<uint8*>(FMemory::Malloc(StructSize)),
-			[](uint8* Ptr) { FMemory::Free(Ptr); }
-		);
-		RowStruct->InitializeStruct(ConfigMemory.Get());
-
-		if (!FJsonObjectConverter::JsonObjectToUStruct(JsonObject.ToSharedRef(), RowStruct, ConfigMemory.Get()))
-		{
-			UE_LOG(LogAbilityEditor, Warning,
-				TEXT("[AbilityEditorHelper] 无法反序列化自定义资产行 %s，已跳过"), *RowNameStr);
-			RowStruct->DestroyStruct(ConfigMemory.Get());
-			continue;
-		}
-
-		FName RowName(*RowNameStr);
-		NewConfigsMemory.Add(RowName, ConfigMemory);
-
-		FString NewJsonStr = SerializeStructToJsonString(RowStruct, ConfigMemory.Get());
-		const FString* ExistingJson = ExistingJsonMap.Find(RowName);
-		if (!ExistingJson || !ExistingJson->Equals(NewJsonStr))
-		{
-			OutUpdatedRowNames.Add(RowName);
-			UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 检测到变化的行：%s"), *RowNameStr);
-		}
-	}
-
-	if (OutUpdatedRowNames.Num() == 0)
-	{
-		UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 未检测到任何数据变化，无需更新"));
-		return true;
-	}
-
-	UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 共检测到 %d 行数据变化"), OutUpdatedRowNames.Num());
-
-#if WITH_EDITOR
-	// 更新 DataTable 中变化的行
-	for (const FName& RowName : OutUpdatedRowNames)
-	{
-		TSharedPtr<uint8, ESPMode::ThreadSafe>* NewConfigMemory = NewConfigsMemory.Find(RowName);
-		if (!NewConfigMemory || !NewConfigMemory->IsValid())
-		{
-			continue;
-		}
-
-		uint8* ExistingRowData = DataTable->FindRowUnchecked(RowName);
-		if (ExistingRowData)
-		{
-			RowStruct->CopyScriptStruct(ExistingRowData, NewConfigMemory->Get());
-		}
-		else
-		{
-			DataTable->AddRow(RowName, *reinterpret_cast<FTableRowBase*>(NewConfigMemory->Get()));
-		}
-	}
-
-	DataTable->MarkPackageDirty();
-
-	const FString BasePath = GetCustomAssetBasePath(Settings);
-	const FString Prefix   = GetCustomAssetPrefix(Settings);
-
-	if (bClearCustomAssetFolderFirst)
-	{
-		CleanupCustomAssetFolder(BasePath, Prefix, DataTable);
-	}
-
-	// 创建/更新变化行对应的资产
-	int32 SuccessCount = 0;
-	int32 FailCount    = 0;
-
-	for (const FName& RowName : OutUpdatedRowNames)
-	{
-		uint8* ConfigData = DataTable->FindRowUnchecked(RowName);
-		if (!ConfigData)
-		{
-			continue;
-		}
-		const FCustomAssetConfig* Config = reinterpret_cast<const FCustomAssetConfig*>(ConfigData);
-
-		FString RowAssetName = RowName.ToString();
-		if (!RowAssetName.StartsWith(Prefix))
-		{
-			RowAssetName = Prefix + RowAssetName;
-		}
-		const FString AssetPath = FString::Printf(TEXT("%s/%s"), *BasePath, *RowAssetName);
-
-		bool bOK = false;
-		UCustomDataAsset* Asset = CreateOrImportCustomAsset(AssetPath, *Config, bOK);
-		if (bOK && Asset)
-		{
-			UE_LOG(LogAbilityEditor, Log,
-				TEXT("[AbilityEditorHelper] 成功创建/更新自定义资产：%s"), *AssetPath);
-			++SuccessCount;
-		}
-		else
-		{
-			UE_LOG(LogAbilityEditor, Error,
-				TEXT("[AbilityEditorHelper] 自定义资产创建/更新失败：%s"), *AssetPath);
-			++FailCount;
-		}
-	}
-
-	UE_LOG(LogAbilityEditor, Log,
-		TEXT("[AbilityEditorHelper] 自定义资产增量更新完成：成功 %d 个，失败 %d 个"), SuccessCount, FailCount);
-
-	return FailCount == 0;
-#else
-	return false;
-#endif
-}
