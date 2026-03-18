@@ -4,6 +4,7 @@
 #include "AbilityEditorTypes.h"
 #include "GameplayEffect.h"
 #include "Abilities/GameplayAbility.h"
+#include "Engine/DataAsset.h"
 
 void UAbilityEditorHelperSubsystem::BroadcastPostProcessGameplayEffect(const FTableRowBase* Config, UGameplayEffect* GE)
 {
@@ -21,11 +22,11 @@ void UAbilityEditorHelperSubsystem::BroadcastPostProcessGameplayAbility(const FT
 	}
 }
 
-void UAbilityEditorHelperSubsystem::BroadcastPostProcessCustomAsset(const FTableRowBase* Config, UCustomDataAsset* Asset)
+void UAbilityEditorHelperSubsystem::BroadcastPostProcessCustomDataAsset(const FTableRowBase* Config, UPrimaryDataAsset* Asset)
 {
-	if (OnPostProcessCustomAsset.IsBound())
+	if (OnPostProcessCustomDataAsset.IsBound())
 	{
-		OnPostProcessCustomAsset.Broadcast(Config, Asset);
+		OnPostProcessCustomDataAsset.Broadcast(Config, Asset);
 	}
 }
 
@@ -36,7 +37,7 @@ void UAbilityEditorHelperSubsystem::Initialize(FSubsystemCollectionBase& Collect
 	const UAbilityEditorHelperSettings* Settings = GetDefault<UAbilityEditorHelperSettings>();
 	if (!Settings)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[AbilityEditorHelper] Settings 未找到，无法缓存 GameplayEffectDataTable。"));
+		UE_LOG(LogTemp, Warning, TEXT("[AbilityEditorHelper] Settings 未找到，无法缓存 DataTable。"));
 		return;
 	}
 
@@ -70,15 +71,18 @@ void UAbilityEditorHelperSubsystem::Initialize(FSubsystemCollectionBase& Collect
 		UE_LOG(LogTemp, Warning, TEXT("[AbilityEditorHelper] 未能加载 GameplayAbilityDataTable，请检查设置。"));
 	}
 
-	// 加载自定义资产 DataTable
-	CachedCustomAssetDataTable = Settings->CustomAssetDataTable.IsValid()
-		? Settings->CustomAssetDataTable.Get()
-		: Settings->CustomAssetDataTable.LoadSynchronous();
+	// 缓存自定义 DataAsset DataTable
+	CachedCustomDataAssetDataTable = Settings->CustomDataAssetDataTable.IsValid()
+		? Settings->CustomDataAssetDataTable.Get()
+		: Settings->CustomDataAssetDataTable.LoadSynchronous();
 
-	if (CachedCustomAssetDataTable)
+	if (CachedCustomDataAssetDataTable)
 	{
-		UE_LOG(LogTemp, Log, TEXT("[AbilityEditorHelper] 已缓存 CustomAssetDataTable：%s"),
-			*CachedCustomAssetDataTable->GetPathName());
+		UE_LOG(LogTemp, Log, TEXT("[AbilityEditorHelper] 已缓存 CustomDataAssetDataTable：%s"),
+			*CachedCustomDataAssetDataTable->GetPathName());
 	}
-	// 自定义资产 DataTable 可以不配置，不打 Warning
+	else
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[AbilityEditorHelper] 未配置 CustomDataAssetDataTable，跳过缓存。"));
+	}
 }

@@ -413,6 +413,26 @@ struct FAbilityTriggerConfig
 };
 
 /**
+ * 通用自定义 DataAsset 配置数据基类（DataTable 行结构）
+ * 项目可派生此结构体并添加自定义字段，通过 OnPostProcessCustomDataAsset 委托应用到资产
+ */
+USTRUCT(BlueprintType)
+struct ABILITYEDITORHELPER_API FCustomDataAssetConfig : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	// 说明/描述（用于在 Excel 中解释此资产的用途）
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Basic",
+		meta = (ExcelHint = "Description of this asset for documentation"))
+	FString Description;
+
+	// 父类（可选，用于继承默认值）
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Basic",
+		meta = (ExcelHint = "Asset path to parent class (e.g. /Game/Assets/DA_Base)"))
+	FString ParentClass;
+};
+
+/**
  * 完整的 GA 配置数据（DataTable 行结构）
  */
 USTRUCT(BlueprintType)
