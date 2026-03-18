@@ -3,6 +3,7 @@
 #include "AbilityEditorHelperSubsystem.h"
 #include "GameplayEffect.h"
 #include "Abilities/GameplayAbility.h"
+#include "Engine/DataAsset.h"
 
 void UAbilityEditorHelperSubsystem::BroadcastPostProcessGameplayEffect(const FTableRowBase* Config, UGameplayEffect* GE)
 {
@@ -20,6 +21,14 @@ void UAbilityEditorHelperSubsystem::BroadcastPostProcessGameplayAbility(const FT
 	}
 }
 
+void UAbilityEditorHelperSubsystem::BroadcastPostProcessCustomDataAsset(const FTableRowBase* Config, UPrimaryDataAsset* Asset)
+{
+	if (OnPostProcessCustomDataAsset.IsBound())
+	{
+		OnPostProcessCustomDataAsset.Broadcast(Config, Asset);
+	}
+}
+
 void UAbilityEditorHelperSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
@@ -27,7 +36,7 @@ void UAbilityEditorHelperSubsystem::Initialize(FSubsystemCollectionBase& Collect
 	const UAbilityEditorHelperSettings* Settings = GetDefault<UAbilityEditorHelperSettings>();
 	if (!Settings)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[AbilityEditorHelper] Settings 未找到，无法缓存 GameplayEffectDataTable。"));
+		UE_LOG(LogTemp, Warning, TEXT("[AbilityEditorHelper] Settings 未找到，无法缓存 DataTable。"));
 		return;
 	}
 
@@ -59,5 +68,20 @@ void UAbilityEditorHelperSubsystem::Initialize(FSubsystemCollectionBase& Collect
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[AbilityEditorHelper] 未能加载 GameplayAbilityDataTable，请检查设置。"));
+	}
+
+	// 缓存自定义 DataAsset DataTable
+	CachedCustomDataAssetDataTable = Settings->CustomDataAssetDataTable.IsValid()
+		? Settings->CustomDataAssetDataTable.Get()
+		: Settings->CustomDataAssetDataTable.LoadSynchronous();
+
+	if (CachedCustomDataAssetDataTable)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[AbilityEditorHelper] 已缓存 CustomDataAssetDataTable：%s"),
+			*CachedCustomDataAssetDataTable->GetPathName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("[AbilityEditorHelper] 未配置 CustomDataAssetDataTable，跳过缓存。"));
 	}
 }

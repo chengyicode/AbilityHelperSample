@@ -7,6 +7,7 @@
 #include "AbilityEditorTypes.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectComponent.h"
+#include "Engine/DataAsset.h"
 #include "AbilityEditorHelperLibrary.generated.h"
 
 class UBlueprint;
@@ -221,4 +222,65 @@ private:
 
 	/** 清理 GA 文件夹中不在 DataTable 中的资产 */
 	static void CleanupGameplayAbilityFolder(const FString& BasePath, const UDataTable* DataTable);
+
+public:
+	// ===========================================
+	// 通用自定义 DataAsset 相关函数
+	// ===========================================
+
+	/**
+	 * 根据 FCustomDataAssetConfig（或其派生类）在指定路径创建或更新 UPrimaryDataAsset 资产。
+	 * - 若资产已存在则加载并广播后处理委托；
+	 * - 若资产不存在则在编辑器下创建新资产。
+	 * 资产的具体数据由项目通过 OnPostProcessCustomDataAsset 委托应用。
+	 *
+	 * @param AssetPath      资产路径（如 /Game/Assets/DA_MyAsset）
+	 * @param AssetClass     资产类型（必须是 UPrimaryDataAsset 或其子类）
+	 * @param Config         配置数据（FCustomDataAssetConfig 或其派生类）
+	 * @param bOutSuccess    是否成功
+	 * @return               创建/更新的资产指针，失败返回 nullptr
+	 */
+	UFUNCTION(BlueprintCallable, Category="AbilityEditorHelper|CustomDataAsset", meta=(DisplayName="Create Or Import Custom DataAsset"))
+	static UPrimaryDataAsset* CreateOrImportCustomDataAsset(
+		const FString& AssetPath,
+		TSubclassOf<UPrimaryDataAsset> AssetClass,
+		const FTableRowBase& Config,
+		bool& bOutSuccess);
+
+	/**
+	 * 基于 UAbilityEditorHelperSettings 中的 CustomDataAssetDataTable 与 CustomDataAssetPath，批量创建/更新自定义 DataAsset。
+	 * 处理结果通过日志输出。
+	 * @param bClearFolderFirst  在导入前是否先清理 CustomDataAssetPath 路径下不在 DataTable 的资产
+	 */
+	UFUNCTION(BlueprintCallable, Category="AbilityEditorHelper|CustomDataAsset", meta=(DisplayName="Create Or Update Custom DataAssets From Settings", CPP_Default_bClearFolderFirst="false"))
+	static void CreateOrUpdateCustomDataAssetsFromSettings(bool bClearFolderFirst = false);
+
+	/**
+	 * 从 JSON 文件导入数据并增量更新自定义 DataAsset
+	 * 该函数会：
+	 * 1. 读取 JSON 文件
+	 * 2. 与现有 DataTable 数据比较，找出新增或变化的行
+	 * 3. 只对变化的行更新 DataTable
+	 * 4. 只对变化的行创建/更新 DataAsset 资产
+	 *
+	 * @param JsonFileName         JSON 文件名（相对于 Settings::JsonPath）
+	 * @param bClearFolderFirst    是否先清理不在 DataTable 中的资产
+	 * @param OutUpdatedRowNames   被更新的行名列表
+	 * @return                     是否成功
+	 */
+	UFUNCTION(BlueprintCallable, Category="AbilityEditorHelper|CustomDataAsset", meta=(DisplayName="Import And Update Custom DataAssets From JSON"))
+	static bool ImportAndUpdateCustomDataAssetsFromJson(
+		const FString& JsonFileName,
+		bool bClearFolderFirst,
+		TArray<FName>& OutUpdatedRowNames);
+
+private:
+	/** 获取自定义 DataAsset 设置和 DataTable */
+	static bool GetCustomAssetSettingsAndDataTable(const UAbilityEditorHelperSettings*& OutSettings, UDataTable*& OutDataTable);
+
+	/** 获取自定义 DataAsset 基础路径 */
+	static FString GetCustomDataAssetBasePath(const UAbilityEditorHelperSettings* Settings);
+
+	/** 清理自定义 DataAsset 文件夹中不在 DataTable 中的资产 */
+	static void CleanupCustomDataAssetFolder(const FString& BasePath, const UDataTable* DataTable, const FString& Prefix);
 };

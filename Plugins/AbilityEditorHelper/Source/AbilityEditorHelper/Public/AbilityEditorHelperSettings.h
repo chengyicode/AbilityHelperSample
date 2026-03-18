@@ -11,6 +11,7 @@ class UGameplayEffect;
 class UGameplayAbility;
 class UDataTable;
 class UEditorUtilityWidgetBlueprint;
+class UPrimaryDataAsset;
 
 /**
  *
@@ -50,6 +51,32 @@ public:
 	/** 批量创建/更新 GameplayAbility 时使用的基础路径（例如：/Game/Abilities/Abilities） */
 	UPROPERTY(Config, EditAnywhere, Category = "GameplayAbility")
 	FString GameplayAbilityPath;
+
+	// === 自定义 DataAsset 配置 ===
+
+	/** 创建自定义 DataAsset 时默认使用的类 */
+	UPROPERTY(Config, EditAnywhere, Category = "CustomDataAsset")
+	TSubclassOf<UPrimaryDataAsset> CustomDataAssetClass;
+
+	/** 用于批量导入/更新自定义 DataAsset 的配置数据表（行结构应为 FCustomDataAssetConfig 或其派生类） */
+	UPROPERTY(Config, EditAnywhere, Category = "CustomDataAsset|Import")
+	TSoftObjectPtr<UDataTable> CustomDataAssetDataTable;
+
+	/** 批量创建/更新自定义 DataAsset 时使用的基础路径（例如：/Game/Assets/Custom） */
+	UPROPERTY(Config, EditAnywhere, Category = "CustomDataAsset")
+	FString CustomDataAssetPath;
+
+	/** 自定义 DataAsset 对应的 Excel 文件名（可不带 .xlsx 后缀） */
+	UPROPERTY(Config, BlueprintReadWrite, EditAnywhere, Category = "CustomDataAsset|Import")
+	FString CustomDataAssetExcelName;
+
+	/** 自定义 DataAsset 配置结构体的类型路径（如 /Script/YourModule.YourAssetConfig） */
+	UPROPERTY(Config, BlueprintReadWrite, EditAnywhere, Category = "CustomDataAsset|Import")
+	FString CustomDataAssetDataType;
+
+	/** 自定义 DataAsset 资产名前缀（默认：DA_） */
+	UPROPERTY(Config, EditAnywhere, Category = "CustomDataAsset")
+	FString CustomDataAssetPrefix = TEXT("DA_");
 
 	// === Excel/数据类型 配置 ===
 
