@@ -221,4 +221,62 @@ private:
 
 	/** 清理 GA 文件夹中不在 DataTable 中的资产 */
 	static void CleanupGameplayAbilityFolder(const FString& BasePath, const UDataTable* DataTable);
+
+public:
+	// ===========================================
+	// 自定义资产（CustomAsset）相关函数
+	// ===========================================
+
+	/**
+	 * 根据 FCustomAssetConfig（或其派生结构体）在指定路径创建或更新 UCustomDataAsset 资产。
+	 * - 若资产已存在则调用 ApplyConfig() 更新字段；
+	 * - 若资产不存在则在编辑器下创建新的 UCustomDataAsset（或 Settings 中配置的派生类）。
+	 * 仅在编辑器环境下可创建新资产，非编辑器环境下仅尝试加载。
+	 *
+	 * @param AssetPath    资产路径（如 /Game/Data/Assets/DA_MyAsset）
+	 * @param Config       来自 DataTable 的配置行
+	 * @param bOutSuccess  是否成功
+	 * @return             创建/更新的资产指针，失败返回 nullptr
+	 */
+	UFUNCTION(BlueprintCallable, Category="AbilityEditorHelper|CustomAsset", meta=(DisplayName="Create Or Import Custom Asset From Config"))
+	static UCustomDataAsset* CreateOrImportCustomAsset(const FString& AssetPath, const FCustomAssetConfig& Config, bool& bOutSuccess);
+
+	/**
+	 * 基于 UAbilityEditorHelperSettings 中的 CustomAssetDataTable 与 CustomAssetPath，
+	 * 批量创建/更新自定义资产。
+	 * 处理结果通过日志输出（创建数/更新数/跳过数/失败数）。
+	 *
+	 * @param bClearCustomAssetFolderFirst  是否先清理路径下不在 DataTable 中的自定义资产
+	 */
+	UFUNCTION(BlueprintCallable, Category="AbilityEditorHelper|CustomAsset", meta=(DisplayName="Create Or Update Custom Assets From Settings", CPP_Default_bClearCustomAssetFolderFirst="false"))
+	static void CreateOrUpdateCustomAssetsFromSettings(bool bClearCustomAssetFolderFirst = false);
+
+	/**
+	 * 从 JSON 文件增量导入数据并更新自定义资产（只处理变化的行）。
+	 * 流程：
+	 *   1. 读取并解析 JSON 文件
+	 *   2. 与 DataTable 现有行做 JSON 差分，找出新增或变化的行
+	 *   3. 仅更新变化行的 DataTable 数据
+	 *   4. 仅对变化行创建/更新资产
+	 *
+	 * @param JsonFileName                   JSON 文件名（相对于 Settings::JsonPath）
+	 * @param bClearCustomAssetFolderFirst   是否先清理不在 DataTable 中的自定义资产
+	 * @param OutUpdatedRowNames             被更新的行名列表
+	 * @return                               是否全部成功（有任何失败返回 false）
+	 */
+	UFUNCTION(BlueprintCallable, Category="AbilityEditorHelper|CustomAsset", meta=(DisplayName="Import And Update Custom Assets From JSON"))
+	static bool ImportAndUpdateCustomAssetsFromJson(const FString& JsonFileName, bool bClearCustomAssetFolderFirst, TArray<FName>& OutUpdatedRowNames);
+
+private:
+	/** 获取自定义资产设置和 DataTable */
+	static bool GetCustomAssetSettingsAndDataTable(const UAbilityEditorHelperSettings*& OutSettings, UDataTable*& OutDataTable);
+
+	/** 获取自定义资产基础存放路径 */
+	static FString GetCustomAssetBasePath(const UAbilityEditorHelperSettings* Settings);
+
+	/** 获取自定义资产名称前缀（带尾部 _ 保证，如 DA_） */
+	static FString GetCustomAssetPrefix(const UAbilityEditorHelperSettings* Settings);
+
+	/** 清理自定义资产文件夹中不在 DataTable 中的资产 */
+	static void CleanupCustomAssetFolder(const FString& BasePath, const FString& AssetPrefix, const UDataTable* DataTable);
 };

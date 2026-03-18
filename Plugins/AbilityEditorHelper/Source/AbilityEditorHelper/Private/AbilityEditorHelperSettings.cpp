@@ -10,9 +10,14 @@ UAbilityEditorHelperSettings::UAbilityEditorHelperSettings()
 {
 	GameplayEffectClass = UGameplayEffect::StaticClass();
 	GameplayAbilityClass = UGameplayAbility::StaticClass();
+	CustomAssetClass = UCustomDataAsset::StaticClass();
 
 	GameplayEffectDataType = TEXT("GameplayEffectConfig");
 	GameplayAbilityDataType = TEXT("GameplayAbilityConfig");
+	CustomAssetDataType = TEXT("CustomAssetConfig");
+
+	// 自定义资产的默认前缀
+	CustomAssetPrefix = TEXT("DA_");
 
 	// 默认启动脚本
 	if (StartupPythonScripts.Num() == 0)
@@ -32,6 +37,9 @@ UAbilityEditorHelperSettings::UAbilityEditorHelperSettings()
 		// GA 核心配置结构体
 		StructTypePathsToExportSchema.Add(FGameplayAbilityConfig::StaticStruct()->GetPathName());
 		StructTypePathsToExportSchema.Add(FAbilityTriggerConfig::StaticStruct()->GetPathName());
+
+		// 自定义资产配置结构体
+		StructTypePathsToExportSchema.Add(FCustomAssetConfig::StaticStruct()->GetPathName());
 
 		// 辅助配置结构体
 		StructTypePathsToExportSchema.Add(FTagRequirementsConfig::StaticStruct()->GetPathName());

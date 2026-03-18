@@ -1,6 +1,7 @@
 // AbilityEditorHelperSubsystem.cpp
 
 #include "AbilityEditorHelperSubsystem.h"
+#include "AbilityEditorTypes.h"
 #include "GameplayEffect.h"
 #include "Abilities/GameplayAbility.h"
 
@@ -17,6 +18,14 @@ void UAbilityEditorHelperSubsystem::BroadcastPostProcessGameplayAbility(const FT
 	if (OnPostProcessGameplayAbility.IsBound())
 	{
 		OnPostProcessGameplayAbility.Broadcast(Config, GA);
+	}
+}
+
+void UAbilityEditorHelperSubsystem::BroadcastPostProcessCustomAsset(const FTableRowBase* Config, UCustomDataAsset* Asset)
+{
+	if (OnPostProcessCustomAsset.IsBound())
+	{
+		OnPostProcessCustomAsset.Broadcast(Config, Asset);
 	}
 }
 
@@ -60,4 +69,16 @@ void UAbilityEditorHelperSubsystem::Initialize(FSubsystemCollectionBase& Collect
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[AbilityEditorHelper] 未能加载 GameplayAbilityDataTable，请检查设置。"));
 	}
+
+	// 加载自定义资产 DataTable
+	CachedCustomAssetDataTable = Settings->CustomAssetDataTable.IsValid()
+		? Settings->CustomAssetDataTable.Get()
+		: Settings->CustomAssetDataTable.LoadSynchronous();
+
+	if (CachedCustomAssetDataTable)
+	{
+		UE_LOG(LogTemp, Log, TEXT("[AbilityEditorHelper] 已缓存 CustomAssetDataTable：%s"),
+			*CachedCustomAssetDataTable->GetPathName());
+	}
+	// 自定义资产 DataTable 可以不配置，不打 Warning
 }

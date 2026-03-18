@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "AttributeSet.h"
+#include "Engine/DataAsset.h"
 #include "GameplayEffect.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "UObject/Object.h"
@@ -520,4 +521,65 @@ struct ABILITYEDITORHELPER_API FGameplayAbilityConfig : public FTableRowBase
 	// 是否在激活时自动重触发
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Advanced")
 	bool bRetriggerInstancedAbility = false;
+};
+
+// ============================================================
+// 通用自定义资产同步支持
+// ============================================================
+
+/**
+ * 通用自定义资产配置行结构（DataTable 行结构基类）
+ * 项目代码可继承此结构并添加业务字段，然后通过
+ * CreateOrUpdateCustomAssetsFromSettings 批量创建/更新自定义资产。
+ *
+ * 使用方式：
+ *   1. 在项目 Source 中继承 FCustomAssetConfig，添加业务字段
+ *   2. 创建一个以此结构体为行类型的 DataTable
+ *   3. 在 AbilityEditorHelperSettings 中配置 CustomAssetDataTable / CustomAssetPath / CustomAssetPrefix
+ *   4. 调用 CreateOrUpdateCustomAssetsFromSettings() 批量同步
+ */
+USTRUCT(BlueprintType)
+struct ABILITYEDITORHELPER_API FCustomAssetConfig : public FTableRowBase
+{
+	GENERATED_BODY()
+
+	/** 资产说明（用于 Excel/文档描述） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CustomAsset",
+		meta = (ExcelHint = "Description of this custom asset for documentation"))
+	FString Description;
+
+	/** 可选父类路径（如 /Game/Assets/DA_Base），留空则使用 Settings 中配置的默认类 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CustomAsset",
+		meta = (ExcelHint = "Optional: Asset path to parent class, e.g. /Game/Assets/DA_Base"))
+	FString ParentClass;
+};
+
+/**
+ * 通用自定义 DataAsset 基类
+ * 项目代码可继承此类，重写 ApplyConfig() 来将 DataTable 配置写入资产字段。
+ *
+ * 使用方式：
+ *   1. 在项目 Source 中继承 UCustomDataAsset，添加业务属性
+ *   2. 重写 ApplyConfig(const FCustomAssetConfig&) 将配置字段映射到资产属性
+ *   3. 在 AbilityEditorHelperSettings 中配置 CustomAssetClass 指向你的派生类
+ *
+ * 注：基类本身只存储 Description，派生类负责完整字段映射。
+ */
+UCLASS(BlueprintType, Blueprintable)
+class ABILITYEDITORHELPER_API UCustomDataAsset : public UPrimaryDataAsset
+{
+	GENERATED_BODY()
+public:
+	/** 资产说明（从 FCustomAssetConfig::Description 同步） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CustomAsset")
+	FString Description;
+
+	/**
+	 * 将配置数据应用到资产属性。
+	 * 派生类应重写此函数以实现完整的字段映射。
+	 * @param Config  来自 DataTable 的配置行（可安全地向下转型为派生结构体）
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "CustomAsset")
+	void ApplyConfig(const FCustomAssetConfig& Config);
+	virtual void ApplyConfig_Implementation(const FCustomAssetConfig& Config);
 };
