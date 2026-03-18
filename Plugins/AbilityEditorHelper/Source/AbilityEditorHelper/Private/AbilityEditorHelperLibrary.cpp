@@ -13,9 +13,7 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "AssetToolsModule.h"
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "Misc/PackageName.h"
 #include "UObject/Package.h"
-#include "ObjectTools.h"
 #include "ObjectTools.h"
 // GE Components (5.3+)
 #include "GameplayEffectComponents/TargetTagsGameplayEffectComponent.h"
@@ -1553,7 +1551,6 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayEffectsFromJson(
 
 	// 使用动态内存分配存储新配置数据
 	TMap<FName, TSharedPtr<uint8, ESPMode::ThreadSafe>> NewConfigsMemory;
-	TMap<FName, FString> NewJsonMap;
 
 	for (const TSharedPtr<FJsonValue>& JsonValue : JsonArray)
 	{
@@ -1577,9 +1574,11 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayEffectsFromJson(
 		}
 
 		// 分配内存并初始化结构体
+		// 注意：deleter 在释放内存前先调用 DestroyStruct，以正确析构 TArray/FString 等成员
+		UScriptStruct* CapturedRowStruct = RowStruct;
 		TSharedPtr<uint8, ESPMode::ThreadSafe> ConfigMemory(
 			static_cast<uint8*>(FMemory::Malloc(StructSize)),
-			[](uint8* Ptr) { FMemory::Free(Ptr); }
+			[CapturedRowStruct](uint8* Ptr) { CapturedRowStruct->DestroyStruct(Ptr); FMemory::Free(Ptr); }
 		);
 		RowStruct->InitializeStruct(ConfigMemory.Get());
 
@@ -1587,7 +1586,7 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayEffectsFromJson(
 		if (!FJsonObjectConverter::JsonObjectToUStruct(JsonObject.ToSharedRef(), RowStruct, ConfigMemory.Get()))
 		{
 			UE_LOG(LogAbilityEditor, Warning, TEXT("无法反序列化行 %s，已跳过"), *RowNameStr);
-			RowStruct->DestroyStruct(ConfigMemory.Get());
+			// ConfigMemory 离开作用域时 deleter 会自动调用 DestroyStruct + FMemory::Free
 			continue;
 		}
 
@@ -1596,7 +1595,6 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayEffectsFromJson(
 
 		// 序列化为 JSON 字符串用于比较
 		FString NewJsonStr = SerializeStructToJsonString(RowStruct, ConfigMemory.Get());
-		NewJsonMap.Add(RowName, NewJsonStr);
 
 		// 比较是否有变化
 		const FString* ExistingJson = ExistingJsonMap.Find(RowName);
@@ -1676,17 +1674,17 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayEffectsFromJson(
 		UGameplayEffect* GE = CreateOrImportGameplayEffect(GEPath, *Config, bOK);
 		if (bOK && GE)
 		{
-			UE_LOG(LogTemp, Log, TEXT("[AbilityEditorHelper] 成功创建/更新 GameplayEffect：%s"), *GEPath);
+			UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 成功创建/更新 GameplayEffect：%s"), *GEPath);
 			++SuccessCount;
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("[AbilityEditorHelper] 创建/更新失败：%s"), *GEPath);
+			UE_LOG(LogAbilityEditor, Error, TEXT("[AbilityEditorHelper] 创建/更新失败：%s"), *GEPath);
 			++FailCount;
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("[AbilityEditorHelper] 增量更新完成：成功 %d 个，失败 %d 个"), SuccessCount, FailCount);
+	UE_LOG(LogAbilityEditor, Log, TEXT("[AbilityEditorHelper] 增量更新完成：成功 %d 个，失败 %d 个"), SuccessCount, FailCount);
 
 	return FailCount == 0;
 #else
@@ -2183,7 +2181,6 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayAbilitiesFromJson(
 
 	// 解析新配置
 	TMap<FName, TSharedPtr<uint8, ESPMode::ThreadSafe>> NewConfigsMemory;
-	TMap<FName, FString> NewJsonMap;
 
 	for (const TSharedPtr<FJsonValue>& JsonValue : JsonArray)
 	{
@@ -2205,16 +2202,18 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayAbilitiesFromJson(
 			continue;
 		}
 
+		// 注意：deleter 在释放内存前先调用 DestroyStruct，以正确析构 TArray/FString 等成员
+		UScriptStruct* CapturedRowStruct = RowStruct;
 		TSharedPtr<uint8, ESPMode::ThreadSafe> ConfigMemory(
 			static_cast<uint8*>(FMemory::Malloc(StructSize)),
-			[](uint8* Ptr) { FMemory::Free(Ptr); }
+			[CapturedRowStruct](uint8* Ptr) { CapturedRowStruct->DestroyStruct(Ptr); FMemory::Free(Ptr); }
 		);
 		RowStruct->InitializeStruct(ConfigMemory.Get());
 
 		if (!FJsonObjectConverter::JsonObjectToUStruct(JsonObject.ToSharedRef(), RowStruct, ConfigMemory.Get()))
 		{
 			UE_LOG(LogAbilityEditor, Warning, TEXT("无法反序列化行 %s，已跳过"), *RowNameStr);
-			RowStruct->DestroyStruct(ConfigMemory.Get());
+			// ConfigMemory 离开作用域时 deleter 会自动调用 DestroyStruct + FMemory::Free
 			continue;
 		}
 
@@ -2222,7 +2221,6 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayAbilitiesFromJson(
 		NewConfigsMemory.Add(RowName, ConfigMemory);
 
 		FString NewJsonStr = SerializeStructToJsonString(RowStruct, ConfigMemory.Get());
-		NewJsonMap.Add(RowName, NewJsonStr);
 
 		const FString* ExistingJson = ExistingJsonMap.Find(RowName);
 		if (!ExistingJson || !ExistingJson->Equals(NewJsonStr))
@@ -2382,8 +2380,15 @@ void UAbilityEditorHelperLibrary::CleanupCustomDataAssetFolder(
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
 
+	// 只扫描 UPrimaryDataAsset（含其派生类），避免误删目录下的其他资产类型
+	FARFilter Filter;
+	Filter.bRecursivePaths = true;
+	Filter.bRecursiveClasses = true;
+	Filter.PackagePaths.Add(FName(*BasePath));
+	Filter.ClassPaths.Add(UPrimaryDataAsset::StaticClass()->GetClassPathName());
+
 	TArray<FAssetData> Assets;
-	AssetRegistry.GetAssetsByPath(FName(*BasePath), Assets, true);
+	AssetRegistry.GetAssets(Filter, Assets);
 
 	TArray<UObject*> ObjectsToDelete;
 	for (const FAssetData& AssetData : Assets)
@@ -2433,6 +2438,21 @@ UPrimaryDataAsset* UAbilityEditorHelperLibrary::CreateOrImportCustomDataAsset(
 		if (!AssetClass)
 		{
 			AssetClass = UPrimaryDataAsset::StaticClass();
+		}
+	}
+
+	// 若 Config 是 FCustomDataAssetConfig 或其派生类，则读取 ParentClass 字段来确定目标资产类型
+	// 与 GE/GA 的 ParentClass 处理逻辑保持一致
+	const FCustomDataAssetConfig* DataAssetConfig = static_cast<const FCustomDataAssetConfig*>(&Config);
+	if (DataAssetConfig && !DataAssetConfig->ParentClass.IsEmpty())
+	{
+		if (UClass* LoadedClass = LoadClassFromPath<UPrimaryDataAsset>(DataAssetConfig->ParentClass))
+		{
+			AssetClass = LoadedClass;
+		}
+		else
+		{
+			UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] 无法加载 ParentClass 指定的类型：%s，回退到原有类型"), *DataAssetConfig->ParentClass);
 		}
 	}
 
@@ -2688,16 +2708,18 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateCustomDataAssetsFromJson(
 			continue;
 		}
 
+		// 注意：deleter 在释放内存前先调用 DestroyStruct，以正确析构 TArray/FString 等成员
+		UScriptStruct* CapturedRowStruct = RowStruct;
 		TSharedPtr<uint8, ESPMode::ThreadSafe> ConfigMemory(
 			static_cast<uint8*>(FMemory::Malloc(StructSize)),
-			[](uint8* Ptr) { FMemory::Free(Ptr); }
+			[CapturedRowStruct](uint8* Ptr) { CapturedRowStruct->DestroyStruct(Ptr); FMemory::Free(Ptr); }
 		);
 		RowStruct->InitializeStruct(ConfigMemory.Get());
 
 		if (!FJsonObjectConverter::JsonObjectToUStruct(JsonObject.ToSharedRef(), RowStruct, ConfigMemory.Get()))
 		{
 			UE_LOG(LogAbilityEditor, Warning, TEXT("无法反序列化行 %s，已跳过"), *RowNameStr);
-			RowStruct->DestroyStruct(ConfigMemory.Get());
+			// ConfigMemory 离开作用域时 deleter 会自动调用 DestroyStruct + FMemory::Free
 			continue;
 		}
 
