@@ -2316,7 +2316,7 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateGameplayAbilitiesFromJson(
 // 通用自定义 DataAsset 实现
 // ===========================================
 
-bool UAbilityEditorHelperLibrary::GetCustomAssetSettingsAndDataTable(
+bool UAbilityEditorHelperLibrary::GetCustomDataAssetSettingsAndDataTable(
 	const UAbilityEditorHelperSettings*& OutSettings,
 	UDataTable*& OutDataTable)
 {
@@ -2538,7 +2538,7 @@ void UAbilityEditorHelperLibrary::CreateOrUpdateCustomDataAssetsFromSettings(boo
 {
 	const UAbilityEditorHelperSettings* Settings = nullptr;
 	UDataTable* DataTable = nullptr;
-	if (!GetCustomAssetSettingsAndDataTable(Settings, DataTable))
+	if (!GetCustomDataAssetSettingsAndDataTable(Settings, DataTable))
 	{
 		UE_LOG(LogAbilityEditor, Warning, TEXT("[AbilityEditorHelper] Settings 未找到或 CustomDataAssetDataTable 未设置。"));
 		return;
@@ -2552,7 +2552,7 @@ void UAbilityEditorHelperLibrary::CreateOrUpdateCustomDataAssetsFromSettings(boo
 	}
 
 	FString BasePath = GetCustomDataAssetBasePath(Settings);
-	FString Prefix = Settings->CustomDataAssetPrefix.IsEmpty() ? TEXT("DA_") : Settings->CustomDataAssetPrefix;
+	FString Prefix = Settings->CustomDataAssetPrefix;
 	TSubclassOf<UPrimaryDataAsset> AssetClass = Settings->CustomDataAssetClass
 		? Settings->CustomDataAssetClass
 		: TSubclassOf<UPrimaryDataAsset>(UPrimaryDataAsset::StaticClass());
@@ -2612,7 +2612,7 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateCustomDataAssetsFromJson(
 
 	const UAbilityEditorHelperSettings* Settings = nullptr;
 	UDataTable* DataTable = nullptr;
-	if (!GetCustomAssetSettingsAndDataTable(Settings, DataTable))
+	if (!GetCustomDataAssetSettingsAndDataTable(Settings, DataTable))
 	{
 		UE_LOG(LogAbilityEditor, Error, TEXT("无法获取 Settings 或 CustomDataAssetDataTable"));
 		return false;
@@ -2745,7 +2745,7 @@ bool UAbilityEditorHelperLibrary::ImportAndUpdateCustomDataAssetsFromJson(
 	DataTable->MarkPackageDirty();
 
 	FString BasePath = GetCustomDataAssetBasePath(Settings);
-	FString Prefix = Settings->CustomDataAssetPrefix.IsEmpty() ? TEXT("DA_") : Settings->CustomDataAssetPrefix;
+	FString Prefix = Settings->CustomDataAssetPrefix;
 	TSubclassOf<UPrimaryDataAsset> AssetClass = Settings->CustomDataAssetClass
 		? Settings->CustomDataAssetClass
 		: TSubclassOf<UPrimaryDataAsset>(UPrimaryDataAsset::StaticClass());

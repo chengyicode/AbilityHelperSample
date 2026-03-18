@@ -276,7 +276,7 @@ public:
 
 private:
 	/** 获取自定义 DataAsset 设置和 DataTable */
-	static bool GetCustomAssetSettingsAndDataTable(const UAbilityEditorHelperSettings*& OutSettings, UDataTable*& OutDataTable);
+	static bool GetCustomDataAssetSettingsAndDataTable(const UAbilityEditorHelperSettings*& OutSettings, UDataTable*& OutDataTable);
 
 	/** 获取自定义 DataAsset 基础路径 */
 	static FString GetCustomDataAssetBasePath(const UAbilityEditorHelperSettings* Settings);
